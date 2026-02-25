@@ -717,13 +717,18 @@
       flex: .4
     }
 
+    .abtn.rs {
+      background: var(--card2);
+      color: var(--text);
+      flex: .7
+    }
+
     /* ── Chat ── */
     .ca {
       width: 100%;
       max-width: 460px;
       flex: 1;
-      min-height: 60px;
-      overflow: hidden;
+      min-height: 0;
       display: flex;
       flex-direction: column;
       gap: 4px;
@@ -731,9 +736,9 @@
 
     .cms {
       flex: 1;
+      min-height: 0;
       overflow-y: auto;
       overflow-x: hidden;
-      padding: 4px 0;
       display: flex;
       flex-direction: column;
       gap: 1px;
@@ -741,7 +746,6 @@
       background: var(--card);
       border-radius: 8px;
       padding: 6px 8px;
-      min-height: 0;
     }
 
     .cm {
@@ -988,23 +992,23 @@
       /* on mobile, acts as if it doesn't exist */
     }
 
-    /* ── Desktop wide layout: chat panel on the right ── */
+    /* ── Desktop wide layout: chat panel on the right, centered ── */
     @media(min-width:900px) {
       body {
-        align-items: stretch;
+        align-items: center;
         justify-content: center;
-        overflow: hidden
+        overflow: hidden;
       }
 
       .gw {
         flex-direction: row;
-        align-items: flex-start;
-        max-width: none;
+        align-items: stretch;
+        max-width: 960px;
         width: 100%;
         padding: 16px 20px;
         gap: 16px;
-        overflow: visible;
-        height: 100dvh;
+        height: min(100dvh, 840px);
+        overflow: hidden;
       }
 
       /* left column: board + controls */
@@ -1012,6 +1016,7 @@
         display: flex;
         flex-direction: column;
         align-items: center;
+        justify-content: center;
         gap: 4px;
         flex: 0 0 auto;
         height: 100%;
@@ -1021,19 +1026,14 @@
       /* right column: chat */
       .ca {
         flex: 1;
-        min-width: 220px;
-        max-width: 320px;
-        height: 100%;
+        min-width: 200px;
+        max-width: 300px;
+        min-height: 0;
         align-self: stretch;
       }
 
-      .cms {
-        flex: 1;
-        max-height: none;
-      }
-
       .bc {
-        width: min(calc(100vh - 300px), 520px, calc(100vw - 380px));
+        width: min(calc(100dvh - 280px), 480px);
       }
     }
   </style>
@@ -1080,7 +1080,8 @@
         🔄 <b>交换</b> — 将对手一颗棋子变成己方<br>
         ⚡ <b>双子</b> — 一回合落两颗子<br>
         🛡️ <b>护盾</b> — 选己方: 3×3保护3回合（对手不可见）；选对方: 直接移除一颗棋子<br>
-        🌧️ <b>降雨</b> — 在5个随机空位生成己方棋子
+        🌧️ <b>降雨</b> — 在5个随机空位生成己方棋子<br>
+        🕵️ <b>偷技</b> — 随机偷走对手一个技能
       </div>
       <div style="margin-top:10px;font-size:.6rem;color:var(--muted)">🔒 PeerJS (WebRTC) P2P 连接</div>
       <div class="lobby-footer">
@@ -1138,6 +1139,7 @@
         <button class="abtn pl" id="btn-pl" onclick="setMode('place')" disabled>⬤ 落子</button>
         <button class="abtn sk" id="btn-sk" onclick="setMode('skill')" disabled>⚡ 使用技能</button>
         <button class="abtn cn" id="btn-cn" onclick="cancelAction()" style="display:none">✕ 取消</button>
+        <button class="abtn rs" id="btn-rs" onclick="reqRestart()" style="display:none">🔄 重开</button>
         <button class="abtn lv" onclick="leaveGame()">🚪</button>
       </div>
     </div><!-- /gw-left -->
@@ -1157,7 +1159,11 @@
     <div class="oc">
       <div class="oe" id="w-e">🎉</div>
       <div class="ot" id="w-t">获胜！</div>
-      <div class="os" id="w-s">对手生命耗尽！</div><button class="ob" onclick="closeWin()">继续</button>
+      <div class="os" id="w-s">对手生命耗尽！</div>
+      <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+        <button class="ob" id="win-restart-btn" onclick="reqRestart()">🔄 重开</button>
+        <button class="ob" style="background:var(--card2);color:var(--text)" onclick="closeWin()">关闭</button>
+      </div>
     </div>
   </div>
   <div class="spop" id="sk-pop">
@@ -1180,6 +1186,7 @@
       double: { id: 'double', icon: '⚡', name: '双子', desc: '一回合落两颗子' },
       shield: { id: 'shield', icon: '🛡️', name: '护盾', desc: '选己方: 3×3保护3回合；选对方: 移除一颗棋子' },
       rain: { id: 'rain', icon: '🌧️', name: '降雨', desc: '在5个随机空位生成己方棋子' },
+      steal: { id: 'steal', icon: '🕵️', name: '偷技', desc: '随机偷走对手一个技能' },
     };
     const SK_IDS = Object.keys(SK);
 
@@ -1296,6 +1303,15 @@
         case 'pong': _heartbeatMissed = 0; break;
         case 'move': receiveMove(d.r, d.c); break;
         case 'skill': receiveSkill(d); break;
+        case 'steal-result':
+          // The victim returned the skill they lost — add it to our pile
+          if (d.skill && mySkills.length < MAX_SKILLS) {
+            mySkills.push({ id: d.skill });
+            sfxSkill(); sysMsg(`🕵️ 偷技成功！获得: ${SK[d.skill].icon}${SK[d.skill].name}`);
+          } else if (d.skill === null) {
+            sysMsg('🕵️ 偷技：对手没有技能，白白浪费了');
+          }
+          updateSkillSlots(); break;
         case 'chat': addChat('对手', d.text); break;
         case 'restart-req': handleRestartReq(); break;
         case 'restart-ok': execRestart(); sysMsg('对手同意重新开始'); break;
@@ -1755,6 +1771,9 @@
       } else if (selSkId === 'rain') {
         // Rain: no target needed, execute immediately
         execRain();
+      } else if (selSkId === 'steal') {
+        // Steal: no target needed, execute immediately
+        execSteal();
       } else {
         mode = 'sktgt';
         const hints = {
@@ -1865,6 +1884,15 @@
       finishSkillTurn();
     }
 
+    function execSteal() {
+      if (mySkills.length === 0) { sysMsg('偷技失败: 你没有技能可偷'); return; }
+      mySkills.splice(selSkIdx, 1);
+      tx({ type: 'skill', skill: 'steal' });
+      sfxSkill();
+      sysMsg('🕵️ 偷技! 等待对手结果...');
+      finishSkillTurn();
+    }
+
     function finishSkillTurn() {
       tickEffects(); turnCount[current]++;
       if (current === myRole && turnCount[myRole] > 0 && turnCount[myRole] % 3 === 0) {
@@ -1934,15 +1962,35 @@
         sfxRain(); sysMsg('对手使用了 🌧️ 降雨');
         for (const t of d.targets) { const w = checkFive(t.r, t.c, opp); if (w) { handleFive(w, opp); return } }
         tickEffects(); turnCount[opp]++; current = current === 1 ? 2 : 1; updateAll(); draw();
+      } else if (d.skill === 'steal') {
+        // Opponent used steal on us — pick a random skill from our list and send it back
+        if (mySkills.length > 0) {
+          const idx = Math.floor(Math.random() * mySkills.length);
+          const stolen = mySkills.splice(idx, 1)[0];
+          sfxSkill(); sysMsg(`对手使用了 🕵️ 偷技，偷走了你的 ${SK[stolen.id].icon}${SK[stolen.id].name}！`);
+          // Send the stolen skill back so the opponent can add it
+          try { conn.send({ type: 'steal-result', skill: stolen.id }) } catch (e) { }
+        } else {
+          sfxSkill(); sysMsg('对手使用了 🕵️ 偷技，但你没有技能被偷');
+          try { conn.send({ type: 'steal-result', skill: null }) } catch (e) { }
+        }
+        tickEffects(); turnCount[opp]++; current = current === 1 ? 2 : 1; updateAll(); draw();
       }
     }
 
     // ═══════════════════════════════════════════════════════
     //  RESTART
     // ═══════════════════════════════════════════════════════
-    function reqRestart() { if (!connected) return; tx({ type: 'restart-req' }); sysMsg('已发送重开请求...') }
-    function handleRestartReq() { sfxNotify(); if (confirm('对手请求重新开始，是否同意？')) { tx({ type: 'restart-ok' }); execRestart(); sysMsg('新一局开始！') } else { tx({ type: 'restart-no' }); sysMsg('你拒绝了重开') } }
-    function execRestart() { initBoard(); closeWin() }
+    function reqRestart() { if (!connected) return; tx({ type: 'restart-req' }); sysMsg('已发送重开请求，等待对手确认...') }
+    function handleRestartReq() {
+      sfxNotify();
+      if (confirm('对手请求重新开始，是否同意？')) {
+        tx({ type: 'restart-ok' }); execRestart(); sysMsg('新一局开始！');
+      } else {
+        tx({ type: 'restart-no' }); sysMsg('你拒绝了重开');
+      }
+    }
+    function execRestart() { initBoard(); closeWin(); document.getElementById('btn-rs').style.display = 'none'; }
     function leaveGame() { if (confirm('确定要离开？')) { stopHeartbeat(); if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null } if (conn) conn.close(); if (peer) peer.destroy(); location.reload() } }
 
     // ═══════════════════════════════════════════════════════
@@ -1994,13 +2042,15 @@
     }
 
     function updateActions() {
-      const bp = document.getElementById('btn-pl'), bs = document.getElementById('btn-sk'), bc = document.getElementById('btn-cn');
+      const bp = document.getElementById('btn-pl'), bs = document.getElementById('btn-sk'), bc = document.getElementById('btn-cn'), br = document.getElementById('btn-rs');
       const isMy = isMyTurn() && !gameOver && connected && !pendingFive;
       if (mode === 'sktgt' || mode === 'dbl1' || mode === 'dbl2' || mode === 'skill') {
         bp.style.display = 'none'; bs.style.display = 'none'; bc.style.display = 'flex'; bc.disabled = false;
+        br.style.display = 'none';
       } else {
         bp.style.display = 'flex'; bs.style.display = 'flex'; bc.style.display = 'none';
         bp.disabled = !isMy; bs.disabled = !isMy || mySkills.length === 0;
+        br.style.display = gameOver ? 'flex' : 'none';
       }
       const myTurns = turnCount[myRole] || 0;
       const nextIn = 3 - (myTurns % 3);
