@@ -1193,7 +1193,7 @@
     // ═══════════════════════════════════════════════════════
     //  NETWORKING
     // ═══════════════════════════════════════════════════════
-    let peer = null, conn = null, myRole = 0, roomCode = '', connected = false;
+    let peer = null, conn = null, myRole = 0, roomCode = '', connected = false, gameStarted = false;
     let _heartbeatInterval = null, _heartbeatMissed = 0;
     const HEARTBEAT_MS = 5000, HEARTBEAT_MAX_MISSED = 3;
     function genCode() { const c = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s = ''; for (let i = 0; i < 5; i++)s += c[Math.floor(Math.random() * c.length)]; return s }
@@ -1291,7 +1291,7 @@
       conn.on('close', () => { connected = false; updateConnUI(); stopHeartbeat(); sysMsg('⚠️ 对手已断开连接'); if (document.getElementById('gw').style.display === 'flex') attemptReconnect() });
       conn.on('error', () => { connected = false; updateConnUI(); stopHeartbeat(); if (document.getElementById('gw').style.display === 'flex') attemptReconnect() });
       startHeartbeat();
-      startGame();
+      if (!gameStarted) { gameStarted = true; startGame(); } else { updateConnUI(); sysMsg('✅ 对手重新连接！'); }
     }
 
     function tx(m) { if (conn && conn.open) { try { conn.send(m) } catch (e) { connected = false; updateConnUI(); stopHeartbeat(); attemptReconnect(); } } }
@@ -1314,8 +1314,8 @@
           updateSkillSlots(); break;
         case 'chat': addChat('对手', d.text); break;
         case 'restart-req': handleRestartReq(); break;
-        case 'restart-ok': execRestart(); sysMsg('对手同意重新开始'); break;
-        case 'restart-no': sysMsg('对手拒绝了重开'); break;
+        case 'restart-ok': restartRequested = false; execRestart(); sysMsg('对手同意重新开始'); break;
+        case 'restart-no': restartRequested = false; sysMsg('对手拒绝了重开'); break;
       }
     }
 
@@ -1981,16 +1981,23 @@
     // ═══════════════════════════════════════════════════════
     //  RESTART
     // ═══════════════════════════════════════════════════════
-    function reqRestart() { if (!connected) return; tx({ type: 'restart-req' }); sysMsg('已发送重开请求，等待对手确认...') }
+    let restartRequested = false;
+    function reqRestart() { if (!connected) return; restartRequested = true; tx({ type: 'restart-req' }); sysMsg('已发送重开请求，等待对手确认...') }
     function handleRestartReq() {
       sfxNotify();
+      if (restartRequested) {
+        // 双方同时请求重开，自动同意
+        restartRequested = false;
+        tx({ type: 'restart-ok' }); execRestart(); sysMsg('新一局开始！');
+        return;
+      }
       if (confirm('对手请求重新开始，是否同意？')) {
         tx({ type: 'restart-ok' }); execRestart(); sysMsg('新一局开始！');
       } else {
         tx({ type: 'restart-no' }); sysMsg('你拒绝了重开');
       }
     }
-    function execRestart() { initBoard(); closeWin(); document.getElementById('btn-rs').style.display = 'none'; }
+    function execRestart() { restartRequested = false; initBoard(); closeWin(); document.getElementById('btn-rs').style.display = 'none'; }
     function leaveGame() { if (confirm('确定要离开？')) { stopHeartbeat(); if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null } if (conn) conn.close(); if (peer) peer.destroy(); location.reload() } }
 
     // ═══════════════════════════════════════════════════════
